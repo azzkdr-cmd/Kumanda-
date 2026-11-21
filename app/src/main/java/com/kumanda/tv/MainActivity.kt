@@ -29,6 +29,13 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.net.Inet4Address
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.Socket
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class MainActivity : Activity(), AtvRemote.Listener {
 
@@ -251,6 +258,49 @@ class MainActivity : Activity(), AtvRemote.Listener {
             runCatching { nsd.stopServiceDiscovery(discovery) }
         }
         runCatching { nsd.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discovery) }
+
+        // mDNS calismazsa diye: yerel agda kumanda portu acik cihazlari tara.
+        thread(name = "scan") {
+            val prefix = localPrefix() ?: return@thread
+            val pool = Executors.newFixedThreadPool(48)
+            for (i in 1..254) {
+                val address = "$prefix.$i"
+                pool.execute {
+                    if (!active) return@execute
+                    val ok = try {
+                        Socket().use { it.connect(InetSocketAddress(address, AtvRemote.REMOTE_PORT), 700) }
+                        true
+                    } catch (e: Exception) {
+                        false
+                    }
+                    if (ok) handler.post {
+                        if (active && found.none { it.first == address }) {
+                            found.add(address to "Android TV")
+                            names.add("Android TV\n$address")
+                            adapter.notifyDataSetChanged()
+                        }
+                    }
+                }
+            }
+            pool.shutdown()
+            pool.awaitTermination(30, TimeUnit.SECONDS)
+            handler.post {
+                if (active) d.setTitle(if (found.isEmpty()) "Cihaz bulunamadı – IP adresi girin" else "Cihaz seçin")
+            }
+        }
+    }
+
+    /** Telefonun Wi-Fi IPv4 adresinin ilk uc okteti (or. "192.168.1"). */
+    private fun localPrefix(): String? = try {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .sortedByDescending { it.name.startsWith("wlan") }
+            .flatMap { it.inetAddresses.toList() }
+            .filterIsInstance<Inet4Address>()
+            .firstOrNull { it.isSiteLocalAddress }
+            ?.hostAddress?.substringBeforeLast('.')
+    } catch (e: Exception) {
+        null
     }
 
     private fun askIp() {
@@ -317,6 +367,7 @@ class MainActivity : Activity(), AtvRemote.Listener {
             setTextColor(Color.WHITE)
             this.textSize = textSize
             typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
             isClickable = true
             isFocusable = true
             val shape = GradientDrawable().apply {
@@ -365,7 +416,7 @@ class MainActivity : Activity(), AtvRemote.Listener {
     }
 
     private fun app(label: String, color: Int, link: String): TextView {
-        val b = button(label, color, 15f)
+        val b = button(label, color, 12f)
         b.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
             launchApp(link)
@@ -413,7 +464,7 @@ class MainActivity : Activity(), AtvRemote.Listener {
 
             addView(row(
                 58,
-                key("⏻", KeyEvent.KEYCODE_POWER, color = RED),
+                key("Güç", KeyEvent.KEYCODE_POWER, color = RED, textSize = 15f),
                 key("Ayarlar", KeyEvent.KEYCODE_SETTINGS, textSize = 15f),
                 key("Sessiz", KeyEvent.KEYCODE_VOLUME_MUTE, textSize = 15f)
             ))
