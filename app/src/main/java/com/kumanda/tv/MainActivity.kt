@@ -29,12 +29,14 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.net.ConnectException
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 class MainActivity : Activity(), AtvRemote.Listener {
@@ -261,7 +263,12 @@ class MainActivity : Activity(), AtvRemote.Listener {
 
         // mDNS calismazsa diye: yerel agda kumanda portu acik cihazlari tara.
         thread(name = "scan") {
-            val prefix = localPrefix() ?: return@thread
+            val prefix = localPrefix()
+            if (prefix == null) {
+                handler.post { if (active) d.setTitle("Wi‑Fi bağlantısı yok – önce Wi‑Fi'a bağlanın") }
+                return@thread
+            }
+            val alive = AtomicInteger()
             val pool = Executors.newFixedThreadPool(48)
             for (i in 1..254) {
                 val address = "$prefix.$i"
@@ -270,9 +277,14 @@ class MainActivity : Activity(), AtvRemote.Listener {
                     val ok = try {
                         Socket().use { it.connect(InetSocketAddress(address, AtvRemote.REMOTE_PORT), 700) }
                         true
+                    } catch (e: ConnectException) {
+                        // Baglanti reddedildi: cihaz var ama kumanda portu kapali.
+                        if (e.message?.contains("refused", true) == true) alive.incrementAndGet()
+                        false
                     } catch (e: Exception) {
                         false
                     }
+                    if (ok) alive.incrementAndGet()
                     if (ok) handler.post {
                         if (active && found.none { it.first == address }) {
                             found.add(address to "Android TV")
@@ -285,7 +297,10 @@ class MainActivity : Activity(), AtvRemote.Listener {
             pool.shutdown()
             pool.awaitTermination(30, TimeUnit.SECONDS)
             handler.post {
-                if (active) d.setTitle(if (found.isEmpty()) "Cihaz bulunamadı – IP adresi girin" else "Cihaz seçin")
+                if (active) d.setTitle(
+                    if (found.isNotEmpty()) "Cihaz seçin"
+                    else "TV bulunamadı. Taranan ağ: $prefix.x – yanıt veren cihaz: ${alive.get()}"
+                )
             }
         }
     }
