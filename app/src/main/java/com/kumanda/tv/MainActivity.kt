@@ -251,7 +251,9 @@ class MainActivity : Activity(), AtvRemote.Listener {
         val d = show(
             AlertDialog.Builder(this)
                 .setTitle("Ağdaki Android TV'ler aranıyor…")
-                .setAdapter(adapter) { _, i -> selectDevice(found[i].first, found[i].second) }
+                .setAdapter(adapter) { _, i ->
+                    if (found[i].first.isEmpty()) askIp() else selectDevice(found[i].first, found[i].second)
+                }
                 .setNeutralButton("IP adresi gir") { _, _ -> askIp() }
                 .setNegativeButton("Kapat", null)
         )
@@ -297,10 +299,16 @@ class MainActivity : Activity(), AtvRemote.Listener {
             pool.shutdown()
             pool.awaitTermination(30, TimeUnit.SECONDS)
             handler.post {
-                if (active) d.setTitle(
-                    if (found.isNotEmpty()) "Cihaz seçin"
-                    else "TV bulunamadı. Taranan ağ: $prefix.x – yanıt veren cihaz: ${alive.get()}"
-                )
+                if (active) {
+                    if (found.isNotEmpty()) {
+                        d.setTitle("Cihaz seçin")
+                    } else {
+                        d.setTitle("TV bulunamadı")
+                        found.add("" to "")
+                        names.add("Taranan ağ: $prefix.x\nYanıt veren cihaz: ${alive.get()}")
+                        adapter.notifyDataSetChanged()
+                    }
+                }
             }
         }
     }
