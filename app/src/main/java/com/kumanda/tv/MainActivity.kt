@@ -271,22 +271,24 @@ class MainActivity : Activity(), AtvRemote.Listener {
                 return@thread
             }
             val alive = AtomicInteger()
-            val pool = Executors.newFixedThreadPool(48)
-            for (i in 1..254) {
+            val pool = Executors.newFixedThreadPool(32)
+            val seen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+            // Iki tur: ilk turda yanit vermeyen (uykudaki/yavas) cihazlar ikinci turda yakalanir.
+            for (round in 1..2) for (i in 1..254) {
                 val address = "$prefix.$i"
                 pool.execute {
-                    if (!active) return@execute
+                    if (!active || address in seen) return@execute
                     val ok = try {
-                        Socket().use { it.connect(InetSocketAddress(address, AtvRemote.REMOTE_PORT), 700) }
+                        Socket().use { it.connect(InetSocketAddress(address, AtvRemote.REMOTE_PORT), 1200) }
                         true
                     } catch (e: ConnectException) {
                         // Baglanti reddedildi: cihaz var ama kumanda portu kapali.
-                        if (e.message?.contains("refused", true) == true) alive.incrementAndGet()
+                        if (e.message?.contains("refused", true) == true && seen.add(address)) alive.incrementAndGet()
                         false
                     } catch (e: Exception) {
                         false
                     }
-                    if (ok) alive.incrementAndGet()
+                    if (ok && seen.add(address)) alive.incrementAndGet()
                     if (ok) handler.post {
                         if (active && found.none { it.first == address }) {
                             found.add(address to "Android TV")
@@ -297,7 +299,7 @@ class MainActivity : Activity(), AtvRemote.Listener {
                 }
             }
             pool.shutdown()
-            pool.awaitTermination(30, TimeUnit.SECONDS)
+            pool.awaitTermination(60, TimeUnit.SECONDS)
             handler.post {
                 if (active) {
                     if (found.isNotEmpty()) {
