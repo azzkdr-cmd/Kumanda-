@@ -43,6 +43,8 @@ class MainActivity : Activity(), AtvRemote.Listener {
 
     private lateinit var remote: AtvRemote
     private lateinit var status: TextView
+    private lateinit var detail: TextView
+    private var probedHost: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("kumanda", Context.MODE_PRIVATE) }
 
@@ -108,6 +110,11 @@ class MainActivity : Activity(), AtvRemote.Listener {
 
     override fun onState(state: AtvRemote.State) {
         updateStatus(state)
+        if (state == AtvRemote.State.UNREACHABLE) probe()
+        else if (state == AtvRemote.State.CONNECTED) {
+            probedHost = null
+            detail.visibility = View.GONE
+        }
         handler.removeCallbacks(reconnect)
         when (state) {
             AtvRemote.State.NEEDS_PAIRING -> askPairing()
@@ -163,6 +170,33 @@ class MainActivity : Activity(), AtvRemote.Listener {
         }
     }
 
+    /** Ulasilamayan cihazda hangi portlarin acik oldugunu gosterir (teshis). */
+    private fun probe() {
+        val h = host ?: return
+        val error = remote.lastError ?: "?"
+        if (probedHost == h) return
+        probedHost = h
+        detail.visibility = View.VISIBLE
+        detail.text = "Hata: $error\nPortlar denetleniyor…"
+        thread(name = "probe") {
+            val ports = listOf(6466 to "kumanda", 6467 to "eşleştirme", 8008 to "cast", 8009 to "cast", 5555 to "adb")
+            val lines = ports.map { (port, label) ->
+                val result = try {
+                    Socket().use { it.connect(InetSocketAddress(h, port), 2500) }
+                    "AÇIK"
+                } catch (e: ConnectException) {
+                    if (e.message?.contains("refused", true) == true) "kapalı (cihaz reddetti)" else "yanıt yok"
+                } catch (e: Exception) {
+                    "yanıt yok"
+                }
+                "$port ($label): $result"
+            }
+            handler.post {
+                if (host == h) detail.text = "Hata: $error\n" + lines.joinToString("\n")
+            }
+        }
+    }
+
     private fun askPairing() {
         val h = host ?: return
         if (!started) return
@@ -200,6 +234,8 @@ class MainActivity : Activity(), AtvRemote.Listener {
         deviceName = name
         prefs.edit().putString("host", newHost).putString("name", name).apply()
         pairing = false
+        probedHost = null
+        detail.visibility = View.GONE
         remote.connect(newHost)
     }
 
@@ -486,6 +522,15 @@ class MainActivity : Activity(), AtvRemote.Listener {
             addView(status, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) })
+
+            detail = TextView(this@MainActivity).apply {
+                textSize = 12f
+                setTextColor(GRAY)
+                setPadding(dp(12), dp(4), dp(12), dp(4))
+                visibility = View.GONE
+                setTextIsSelectable(true)
+            }
+            addView(detail)
 
             addView(row(
                 58,

@@ -43,6 +43,11 @@ class AtvRemote(context: Context, private val listener: Listener) {
     var state = State.DISCONNECTED
         private set
 
+    /** Son baglanti hatasinin metni (teshis icin). */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     private fun post(gen: Int, state: State) {
         main.post {
             if (gen == generation.get()) {
@@ -53,7 +58,12 @@ class AtvRemote(context: Context, private val listener: Listener) {
     }
 
     private fun open(host: String, port: Int): SSLSocket {
-        val s = identity.sslContext.socketFactory.createSocket() as SSLSocket
+        val factory = try {
+            identity.sslContext.socketFactory
+        } catch (e: Throwable) {
+            throw IllegalStateException("Sertifika oluşturulamadı: ${e.javaClass.simpleName}: ${e.message}")
+        }
+        val s = factory.createSocket() as SSLSocket
         try {
             s.connect(InetSocketAddress(host, port), 5000)
         } catch (e: Exception) {
@@ -123,6 +133,7 @@ class AtvRemote(context: Context, private val listener: Listener) {
                     socket = null
                     output = null
                 }
+                lastError = e.javaClass.simpleName + (e.message?.let { ": $it" } ?: "")
                 val st = when {
                     !tcpConnected -> State.UNREACHABLE
                     gotMessage || e is SocketTimeoutException -> State.DISCONNECTED
